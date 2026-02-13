@@ -916,7 +916,7 @@ btnDownload.addEventListener('click', async () => {
   btnDownload.textContent = '作成中...';
 
   try {
-    const srcDoc = await PDFDocument.load(pdfBytes);
+    const srcDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     const newDoc = await PDFDocument.create();
     const keepIndices = [];
     decisions.forEach((d, i) => { if (d === 'keep') keepIndices.push(i); });
