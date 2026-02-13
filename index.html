@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PickPDF - PDF Page Selector</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --keep-color: #22c55e;
+  --discard-color: #ef4444;
+  --bg: #0f172a;
+  --card-bg: #1e293b;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --accent: #6366f1;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* ===== Upload Screen ===== */
+#upload-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 2rem;
+}
+
+.app-title {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.app-subtitle {
+  color: var(--text-muted);
+  margin-bottom: 2.5rem;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.drop-zone {
+  width: 100%;
+  max-width: 480px;
+  border: 2px dashed #475569;
+  border-radius: 1.5rem;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.drop-zone-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.drop-zone p { color: var(--text-muted); }
+.drop-zone p strong { color: var(--text); }
+
+#file-input { display: none; }
+
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.85);
+  z-index: 1000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.loading-overlay.show { display: flex; }
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #334155;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Selector Screen ===== */
+#selector-screen { display: none; min-height: 100dvh; }
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--card-bg);
+  border-bottom: 1px solid #334155;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.top-bar-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.page-counter {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-reset {
+  background: none;
+  border: 1px solid #475569;
+  color: var(--text-muted);
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.2s;
+}
+
+.btn-reset:hover { background: #334155; }
+
+/* Card area */
+.card-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+  height: calc(100dvh - 60px - 140px);
+}
+
+.swipe-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.swipe-hint.left { left: 0.75rem; }
+.swipe-hint.right { right: 0.75rem; }
+
+.card-container {
+  position: relative;
+  width: 100%;
+  max-width: 500px;
+  aspect-ratio: 3/4;
+  max-height: 100%;
+}
+
+.card {
+  position: absolute;
+  inset: 0;
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  overflow: hidden;
+  touch-action: pan-y;
+  cursor: grab;
+  transition: transform 0.05s linear;
+  will-change: transform;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card.animating {
+  transition: transform 0.35s ease, opacity 0.35s ease;
+}
+
+.card canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.card-badge {
+  position: absolute;
+  top: 1rem;
+  padding: 0.4rem 1.2rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  font-size: 1.2rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+
+.card-badge.keep {
+  right: 1rem;
+  background: var(--keep-color);
+  color: white;
+  border: 2px solid var(--keep-color);
+}
+
+.card-badge.discard {
+  left: 1rem;
+  background: var(--discard-color);
+  color: white;
+  border: 2px solid var(--discard-color);
+}
+
+.page-number-badge {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.65);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Bottom controls */
+.bottom-controls {
+  padding: 1rem 1.5rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  background: var(--card-bg);
+  border-top: 1px solid #334155;
+}
+
+.ctrl-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.ctrl-btn:active { transform: scale(0.9); }
+
+.ctrl-btn.discard {
+  border-color: var(--discard-color);
+  color: var(--discard-color);
+}
+
+.ctrl-btn.discard:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.ctrl-btn.undo {
+  border-color: #f59e0b;
+  color: #f59e0b;
+  width: 48px;
+  height: 48px;
+  font-size: 1.2rem;
+}
+
+.ctrl-btn.undo:hover { background: rgba(245, 158, 11, 0.15); }
+
+.ctrl-btn.zoom {
+  border-color: var(--accent);
+  color: var(--accent);
+  width: 48px;
+  height: 48px;
+  font-size: 1.2rem;
+}
+
+.ctrl-btn.zoom:hover { background: rgba(99, 102, 241, 0.15); }
+
+.ctrl-btn.keep {
+  border-color: var(--keep-color);
+  color: var(--keep-color);
+}
+
+.ctrl-btn.keep:hover {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+/* ===== Zoom Modal ===== */
+.zoom-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(0,0,0,0.92);
+  flex-direction: column;
+}
+
+.zoom-modal.show { display: flex; }
+
+.zoom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: rgba(30,41,59,0.9);
+}
+
+.zoom-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+
+.zoom-body {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.zoom-body canvas {
+  max-width: none;
+  cursor: grab;
+  transform-origin: center center;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(30,41,59,0.9);
+}
+
+.zoom-btn {
+  background: #334155;
+  border: none;
+  color: white;
+  width: 44px;
+  height: 44px;
+  border-radius: 0.5rem;
+  font-size: 1.3rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.zoom-btn:hover { background: #475569; }
+
+.zoom-level {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  min-width: 4rem;
+  text-align: center;
+}
+
+/* ===== Result Screen ===== */
+#result-screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 2rem;
+  text-align: center;
+}
+
+.result-icon { font-size: 4rem; margin-bottom: 1.5rem; }
+
+.result-stats {
+  color: var(--text-muted);
+  margin: 1rem 0 2rem;
+  line-height: 1.8;
+}
+
+.result-stats strong { color: var(--text); }
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 1rem 2.5rem;
+  border-radius: 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  margin-bottom: 1rem;
+}
+
+.btn-primary:hover { background: #4f46e5; }
+.btn-primary:active { transform: scale(0.97); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid #475569;
+  padding: 0.75rem 2rem;
+  border-radius: 0.75rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover { background: #1e293b; }
+
+.no-pages-message {
+  color: var(--text-muted);
+  margin: 1rem 0 2rem;
+}
+
+/* ===== Progress bar ===== */
+.progress-bar-container {
+  width: 100%;
+  height: 3px;
+  background: #334155;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #a78bfa);
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+/* ===== Keyboard hints ===== */
+.keyboard-hints {
+  display: none;
+  justify-content: center;
+  gap: 2rem;
+  padding: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .keyboard-hints { display: flex; }
+}
+
+kbd {
+  background: #334155;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.25rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  border: 1px solid #475569;
+}
+</style>
+</head>
+<body>
+
+<!-- Upload Screen -->
+<div id="upload-screen">
+  <h1 class="app-title">PickPDF</h1>
+  <p class="app-subtitle">PDFをアップロードして、残すページをスワイプで選ぼう</p>
+  <div class="drop-zone" id="drop-zone">
+    <div class="drop-zone-icon">&#128196;</div>
+    <p><strong>タップしてPDFを選択</strong></p>
+    <p style="margin-top:0.5rem; font-size:0.85rem;">またはここにドラッグ＆ドロップ</p>
+  </div>
+  <input type="file" id="file-input" accept="application/pdf">
+</div>
+
+<!-- Loading -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <p>PDFを読み込み中...</p>
+</div>
+
+<!-- Selector Screen -->
+<div id="selector-screen">
+  <div class="top-bar">
+    <button class="btn-reset" id="btn-back">&#8592; 戻る</button>
+    <span class="page-counter" id="page-counter">1 / 1</span>
+    <span class="top-bar-title">PickPDF</span>
+  </div>
+  <div class="progress-bar-container">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+  <div class="card-area" id="card-area">
+    <span class="swipe-hint left">&#10060; 削除</span>
+    <span class="swipe-hint right">&#9989; 残す</span>
+    <div class="card-container" id="card-container"></div>
+  </div>
+  <div class="keyboard-hints">
+    <span><kbd>&#8592;</kbd> 削除</span>
+    <span><kbd>&#8594;</kbd> 残す</span>
+    <span><kbd>Z</kbd> 戻す</span>
+    <span><kbd>Space</kbd> 拡大</span>
+  </div>
+  <div class="bottom-controls">
+    <button class="ctrl-btn discard" id="btn-discard" title="削除">&#10006;</button>
+    <button class="ctrl-btn undo" id="btn-undo" title="戻す">&#8630;</button>
+    <button class="ctrl-btn zoom" id="btn-zoom" title="拡大">&#128269;</button>
+    <button class="ctrl-btn keep" id="btn-keep" title="残す">&#10004;</button>
+  </div>
+</div>
+
+<!-- Zoom Modal -->
+<div class="zoom-modal" id="zoom-modal">
+  <div class="zoom-header">
+    <span id="zoom-page-label" style="color:var(--text-muted);font-size:0.9rem;"></span>
+    <button class="zoom-close" id="zoom-close">&#10005;</button>
+  </div>
+  <div class="zoom-body" id="zoom-body">
+    <canvas id="zoom-canvas"></canvas>
+  </div>
+  <div class="zoom-controls">
+    <button class="zoom-btn" id="zoom-out">&#8722;</button>
+    <span class="zoom-level" id="zoom-level">100%</span>
+    <button class="zoom-btn" id="zoom-in">&#43;</button>
+    <button class="zoom-btn" id="zoom-fit" title="フィット" style="font-size:1rem;">&#9634;</button>
+  </div>
+</div>
+
+<!-- Result Screen -->
+<div id="result-screen">
+  <div class="result-icon">&#10024;</div>
+  <h2>選択完了!</h2>
+  <div class="result-stats" id="result-stats"></div>
+  <button class="btn-primary" id="btn-download">&#11015; PDFをダウンロード</button>
+  <button class="btn-secondary" id="btn-start-over">最初からやり直す</button>
+  <div class="no-pages-message" id="no-pages-message" style="display:none;">
+    残すページが選択されていません。
+  </div>
+</div>
+
+<script>
+const pdfjsLib = window['pdfjs-dist/build/pdf'];
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const { PDFDocument } = PDFLib;
+
+// State
+let pdfDoc = null;
+let pdfBytes = null;
+let totalPages = 0;
+let currentIndex = 0;
+let decisions = [];        // 'keep' | 'discard' | undefined
+let pageCanvases = [];     // pre-rendered thumbnails
+let history = [];          // for undo
+
+// DOM refs
+const uploadScreen = document.getElementById('upload-screen');
+const selectorScreen = document.getElementById('selector-screen');
+const resultScreen = document.getElementById('result-screen');
+const loading = document.getElementById('loading');
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const cardContainer = document.getElementById('card-container');
+const cardArea = document.getElementById('card-area');
+const pageCounter = document.getElementById('page-counter');
+const progressBar = document.getElementById('progress-bar');
+const zoomModal = document.getElementById('zoom-modal');
+const zoomCanvas = document.getElementById('zoom-canvas');
+const zoomBody = document.getElementById('zoom-body');
+const zoomLevel = document.getElementById('zoom-level');
+const zoomPageLabel = document.getElementById('zoom-page-label');
+const resultStats = document.getElementById('result-stats');
+const noPageMsg = document.getElementById('no-pages-message');
+const btnDownload = document.getElementById('btn-download');
+
+// Upload handlers
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadPDF(e.target.files[0]); });
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type === 'application/pdf') loadPDF(f);
+});
+
+async function loadPDF(file) {
+  loading.classList.add('show');
+  try {
+    pdfBytes = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+    totalPages = pdfDoc.numPages;
+    decisions = new Array(totalPages).fill(undefined);
+    history = [];
+    currentIndex = 0;
+    pageCanvases = new Array(totalPages).fill(null);
+
+    // Pre-render first few pages
+    const preloadCount = Math.min(3, totalPages);
+    for (let i = 0; i < preloadCount; i++) {
+      await renderPageThumb(i);
+    }
+
+    // Preload rest in background
+    (async () => {
+      for (let i = preloadCount; i < totalPages; i++) {
+        await renderPageThumb(i);
+      }
+    })();
+
+    loading.classList.remove('show');
+    showSelector();
+  } catch(err) {
+    loading.classList.remove('show');
+    alert('PDFの読み込みに失敗しました: ' + err.message);
+  }
+}
+
+async function renderPageThumb(idx) {
+  if (pageCanvases[idx]) return pageCanvases[idx];
+  const page = await pdfDoc.getPage(idx + 1);
+  const vp = page.getViewport({ scale: 1 });
+  const scale = Math.min(500 / vp.width, 650 / vp.height, 2);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  pageCanvases[idx] = canvas;
+  return canvas;
+}
+
+// Selector
+function showSelector() {
+  uploadScreen.style.display = 'none';
+  resultScreen.style.display = 'none';
+  selectorScreen.style.display = 'block';
+  showCurrentCard();
+}
+
+function showCurrentCard() {
+  // Skip already-decided pages to find next undecided
+  while (currentIndex < totalPages && decisions[currentIndex] !== undefined) {
+    currentIndex++;
+  }
+
+  if (currentIndex >= totalPages) {
+    showResult();
+    return;
+  }
+
+  updateCounter();
+  cardContainer.innerHTML = '';
+
+  // Show next card behind (if exists)
+  let nextUndecided = -1;
+  for (let i = currentIndex + 1; i < totalPages; i++) {
+    if (decisions[i] === undefined) { nextUndecided = i; break; }
+  }
+
+  if (nextUndecided !== -1 && pageCanvases[nextUndecided]) {
+    const bg = document.createElement('div');
+    bg.className = 'card';
+    bg.style.transform = 'scale(0.93)';
+    bg.style.opacity = '0.5';
+    bg.style.pointerEvents = 'none';
+    bg.style.zIndex = '1';
+    const c = pageCanvases[nextUndecided].cloneNode(true);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(pageCanvases[nextUndecided], 0, 0);
+    bg.appendChild(c);
+    cardContainer.appendChild(bg);
+  }
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.zIndex = '10';
+  card.id = 'active-card';
+
+  const keepBadge = document.createElement('div');
+  keepBadge.className = 'card-badge keep';
+  keepBadge.textContent = 'KEEP';
+
+  const discardBadge = document.createElement('div');
+  discardBadge.className = 'card-badge discard';
+  discardBadge.textContent = 'DROP';
+
+  const pageBadge = document.createElement('div');
+  pageBadge.className = 'page-number-badge';
+  pageBadge.textContent = `${currentIndex + 1} / ${totalPages}`;
+
+  if (pageCanvases[currentIndex]) {
+    const c = pageCanvases[currentIndex].cloneNode(true);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(pageCanvases[currentIndex], 0, 0);
+    card.appendChild(c);
+  }
+
+  card.appendChild(keepBadge);
+  card.appendChild(discardBadge);
+  card.appendChild(pageBadge);
+  cardContainer.appendChild(card);
+
+  setupSwipe(card, keepBadge, discardBadge);
+}
+
+function updateCounter() {
+  const undecided = decisions.filter(d => d === undefined).length;
+  const decided = totalPages - undecided;
+  pageCounter.textContent = `${decided + 1} / ${totalPages}`;
+  progressBar.style.width = `${(decided / totalPages) * 100}%`;
+}
+
+// Swipe
+function setupSwipe(card, keepBadge, discardBadge) {
+  let startX = 0, startY = 0, currentX = 0, isDragging = false, startTime = 0;
+  const threshold = 80;
+
+  function onStart(e) {
+    isDragging = true;
+    const point = e.touches ? e.touches[0] : e;
+    startX = point.clientX;
+    startY = point.clientY;
+    currentX = 0;
+    startTime = Date.now();
+    card.style.transition = 'none';
+  }
+
+  function onMove(e) {
+    if (!isDragging) return;
+    const point = e.touches ? e.touches[0] : e;
+    currentX = point.clientX - startX;
+    const rotate = currentX * 0.08;
+    card.style.transform = `translateX(${currentX}px) rotate(${rotate}deg)`;
+
+    const progress = Math.min(Math.abs(currentX) / threshold, 1);
+    if (currentX > 0) {
+      keepBadge.style.opacity = progress;
+      discardBadge.style.opacity = 0;
+    } else {
+      discardBadge.style.opacity = progress;
+      keepBadge.style.opacity = 0;
+    }
+  }
+
+  function onEnd() {
+    if (!isDragging) return;
+    isDragging = false;
+
+    if (Math.abs(currentX) > threshold) {
+      flyOut(card, currentX > 0 ? 'keep' : 'discard');
+    } else {
+      card.classList.add('animating');
+      card.style.transform = '';
+      keepBadge.style.opacity = 0;
+      discardBadge.style.opacity = 0;
+      setTimeout(() => card.classList.remove('animating'), 350);
+    }
+  }
+
+  card.addEventListener('mousedown', onStart);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onEnd);
+
+  card.addEventListener('touchstart', onStart, { passive: true });
+  card.addEventListener('touchmove', onMove, { passive: true });
+  card.addEventListener('touchend', onEnd);
+}
+
+function flyOut(card, decision) {
+  const dir = decision === 'keep' ? 1 : -1;
+  card.classList.add('animating');
+  card.style.transform = `translateX(${dir * window.innerWidth}px) rotate(${dir * 30}deg)`;
+  card.style.opacity = '0';
+
+  history.push({ index: currentIndex, decision });
+  decisions[currentIndex] = decision;
+  currentIndex++;
+
+  setTimeout(() => showCurrentCard(), 300);
+}
+
+// Buttons
+document.getElementById('btn-discard').addEventListener('click', () => {
+  const card = document.getElementById('active-card');
+  if (card) flyOut(card, 'discard');
+});
+
+document.getElementById('btn-keep').addEventListener('click', () => {
+  const card = document.getElementById('active-card');
+  if (card) flyOut(card, 'keep');
+});
+
+document.getElementById('btn-undo').addEventListener('click', undo);
+
+function undo() {
+  if (history.length === 0) return;
+  const last = history.pop();
+  decisions[last.index] = undefined;
+  currentIndex = last.index;
+  showCurrentCard();
+}
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (zoomModal.classList.contains('show')) {
+    if (e.key === 'Escape') closeZoom();
+    return;
+  }
+  if (selectorScreen.style.display === 'none') return;
+  if (e.key === 'ArrowRight') {
+    const card = document.getElementById('active-card');
+    if (card) flyOut(card, 'keep');
+  } else if (e.key === 'ArrowLeft') {
+    const card = document.getElementById('active-card');
+    if (card) flyOut(card, 'discard');
+  } else if (e.key === 'z' || e.key === 'Z') {
+    undo();
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    openZoom();
+  }
+});
+
+// Zoom
+let currentZoomScale = 1;
+
+document.getElementById('btn-zoom').addEventListener('click', openZoom);
+document.getElementById('zoom-close').addEventListener('click', closeZoom);
+document.getElementById('zoom-in').addEventListener('click', () => setZoomScale(currentZoomScale + 0.25));
+document.getElementById('zoom-out').addEventListener('click', () => setZoomScale(currentZoomScale - 0.25));
+document.getElementById('zoom-fit').addEventListener('click', () => setZoomScale(1));
+
+async function openZoom() {
+  if (currentIndex >= totalPages) return;
+  zoomModal.classList.add('show');
+  zoomPageLabel.textContent = `Page ${currentIndex + 1} / ${totalPages}`;
+  currentZoomScale = 1;
+  await renderZoom();
+}
+
+function closeZoom() {
+  zoomModal.classList.remove('show');
+}
+
+async function renderZoom() {
+  const page = await pdfDoc.getPage(currentIndex + 1);
+  const vp = page.getViewport({ scale: 1 });
+  const containerW = zoomBody.clientWidth - 32;
+  const containerH = zoomBody.clientHeight - 32;
+  const fitScale = Math.min(containerW / vp.width, containerH / vp.height);
+  const scale = fitScale * currentZoomScale;
+  const viewport = page.getViewport({ scale });
+
+  zoomCanvas.width = viewport.width;
+  zoomCanvas.height = viewport.height;
+  const ctx = zoomCanvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  zoomLevel.textContent = `${Math.round(currentZoomScale * 100)}%`;
+}
+
+function setZoomScale(s) {
+  currentZoomScale = Math.max(0.5, Math.min(5, s));
+  renderZoom();
+}
+
+// Result
+function showResult() {
+  selectorScreen.style.display = 'none';
+  resultScreen.style.display = 'flex';
+
+  const kept = decisions.filter(d => d === 'keep').length;
+  const discarded = decisions.filter(d => d === 'discard').length;
+
+  resultStats.innerHTML = `
+    全 <strong>${totalPages}</strong> ページ中<br>
+    <span style="color:var(--keep-color);">&#9989; 残す: <strong>${kept}</strong> ページ</span><br>
+    <span style="color:var(--discard-color);">&#10060; 削除: <strong>${discarded}</strong> ページ</span>
+  `;
+
+  if (kept === 0) {
+    btnDownload.style.display = 'none';
+    noPageMsg.style.display = 'block';
+  } else {
+    btnDownload.style.display = '';
+    noPageMsg.style.display = 'none';
+  }
+}
+
+// Download
+btnDownload.addEventListener('click', async () => {
+  btnDownload.disabled = true;
+  btnDownload.textContent = '作成中...';
+
+  try {
+    const srcDoc = await PDFDocument.load(pdfBytes);
+    const newDoc = await PDFDocument.create();
+    const keepIndices = [];
+    decisions.forEach((d, i) => { if (d === 'keep') keepIndices.push(i); });
+
+    const pages = await newDoc.copyPages(srcDoc, keepIndices);
+    pages.forEach(p => newDoc.addPage(p));
+
+    const newPdfBytes = await newDoc.save();
+    const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'picked.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(err) {
+    alert('PDFの作成に失敗しました: ' + err.message);
+  }
+
+  btnDownload.disabled = false;
+  btnDownload.textContent = '\u2B07 PDFをダウンロード';
+});
+
+// Back / Start over
+document.getElementById('btn-back').addEventListener('click', () => {
+  if (confirm('アップロード画面に戻りますか？選択状態はリセットされます。')) {
+    resetAll();
+  }
+});
+
+document.getElementById('btn-start-over').addEventListener('click', resetAll);
+
+function resetAll() {
+  pdfDoc = null;
+  pdfBytes = null;
+  totalPages = 0;
+  currentIndex = 0;
+  decisions = [];
+  history = [];
+  pageCanvases = [];
+  fileInput.value = '';
+  selectorScreen.style.display = 'none';
+  resultScreen.style.display = 'none';
+  uploadScreen.style.display = 'flex';
+}
+</script>
+</body>
+</html>
