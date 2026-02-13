@@ -6,9 +6,9 @@ PDFから必要なページだけをスワイプで選んで、1つのファイ�
 
 GitHub Pagesで公開後、以下のURLでアクセスできます：
 
-```
-https://<your-username>.github.io/PickPDF/
-```
+
+https://Nyami00.github.io/PickPDF/
+
 
 ## Features
 
